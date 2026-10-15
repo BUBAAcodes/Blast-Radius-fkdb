@@ -8,9 +8,15 @@
     "start": "next start"
   },
   "dependencies": {
+    "@ai-sdk/google": "^4.0.96",
+    "@ai-sdk/react": "^4.0.145",
+    "ai": "^7.0.141",
+    "falkordb": "^6.8.0",
     "next": "16.4.1",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "react-force-graph-2d": "^1.29.2",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
