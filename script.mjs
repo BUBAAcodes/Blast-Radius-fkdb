@@ -1,127 +1,89 @@
+// Loads graph-data.json into FalkorDB.
+// Safe to re-run: every node and relationship uses MERGE, so nothing gets duplicated.
+// Usage:  npm run seed            (add or update data)
+//         npm run seed -- --reset (delete the graph first, then load fresh)
 import { readFile } from 'node:fs/promises';
 import { FalkorDB } from 'falkordb';
 
-const data = JSON.parse(
-  await readFile(new URL('./graph-data.json', import.meta.url), 'utf8'),
-);
+const GRAPH = process.env.FALKORDB_GRAPH || 'outages';
+const data = JSON.parse(await readFile(new URL('./graph-data.json', import.meta.url), 'utf8'));
 
+const host = process.env.FALKORDB_HOST || 'localhost';
+const port = Number(process.env.FALKORDB_PORT || 6379);
 const db = await FalkorDB.connect({
-  host: 'localhost',
-  port: 6379,
+  ...(process.env.FALKORDB_TLS === 'true' ? { socket: { host, port, tls: true } } : { host, port }),
+  username: process.env.FALKORDB_USERNAME || undefined,
+  password: process.env.FALKORDB_PASSWORD || undefined,
 });
+const graph = db.selectGraph(GRAPH);
+const run = (cypher, params = {}) => graph.query(cypher, { params });
 
-// Use the SAME graph name as your browser: practice
-const graph = db.selectGraph('practice');
+if (process.argv.includes('--reset')) {
+  try { await graph.delete(); console.log(`Deleted graph "${GRAPH}"`); } catch { /* graph did not exist yet */ }
+}
 
-// Indexes on the keys we MERGE/MATCH on. Creating an existing index throws, so ignore that.
-const INDEXES = [
+// Indexes make the lookups by name/id fast. They error if they already exist, so ignore that.
+for (const idx of [
   'CREATE INDEX FOR (s:Service) ON (s.name)',
   'CREATE INDEX FOR (t:Team) ON (t.name)',
   'CREATE INDEX FOR (p:Person) ON (p.id)',
   'CREATE INDEX FOR (i:Incident) ON (i.id)',
-];
-
-// Every statement uses MERGE, so re-running the script does not create duplicates.
-const SEED = [
-  {
-    params: { teams: data.teams },
-    query: `
-      UNWIND $teams AS t
-      MERGE (team:Team {name: t.name})
-      SET team.slack = t.slack, team.focus = t.focus`,
-  },
-  {
-    params: { services: data.services },
-    query: `
-      UNWIND $services AS s
-      MERGE (svc:Service {name: s.name})
-      SET svc.tier = s.tier, svc.type = s.type, svc.tech = s.tech, svc.description = s.description
-      WITH svc, s
-      MATCH (team:Team {name: s.owner})
-      MERGE (team)-[:OWNS]->(svc)`,
-  },
-  {
-    params: { people: data.people },
-    query: `
-      UNWIND $people AS p
-      MERGE (person:Person {id: p.id})
-      SET person.name = p.name, person.role = p.role
-      WITH person, p
-      MATCH (team:Team {name: p.team})
-      MERGE (person)-[:MEMBER_OF]->(team)`,
-  },
-  {
-    params: { deps: data.dependencies },
-    query: `
-      UNWIND $deps AS d
-      MATCH (a:Service {name: d.from}), (b:Service {name: d.to})
-      MERGE (a)-[r:DEPENDS_ON]->(b)
-      SET r.via = d.via`,
-  },
-  {
-    params: { workedOn: data.workedOn },
-    query: `
-      UNWIND $workedOn AS w
-      MATCH (p:Person {id: w.person}), (s:Service {name: w.service})
-      MERGE (p)-[r:WORKED_ON]->(s)
-      SET r.commits = w.commits, r.lastActive = w.lastActive`,
-  },
-  {
-    params: { incidents: data.incidents },
-    query: `
-      UNWIND $incidents AS i
-      MERGE (inc:Incident {id: i.id})
-      SET inc.title = i.title, inc.severity = i.severity, inc.startedAt = i.startedAt,
-          inc.durationMinutes = i.durationMinutes, inc.rootCause = i.rootCause
-      WITH inc, i
-      MATCH (s:Service {name: i.originatedIn})
-      MERGE (inc)-[:ORIGINATED_IN]->(s)`,
-  },
-  {
-    params: { incidents: data.incidents },
-    query: `
-      UNWIND $incidents AS i
-      UNWIND i.affected AS name
-      MATCH (inc:Incident {id: i.id}), (s:Service {name: name})
-      MERGE (inc)-[:AFFECTED]->(s)`,
-  },
-  {
-    params: { incidents: data.incidents },
-    query: `
-      UNWIND $incidents AS i
-      UNWIND i.responders AS pid
-      MATCH (inc:Incident {id: i.id}), (p:Person {id: pid})
-      MERGE (p)-[:RESPONDED_TO]->(inc)`,
-  },
-];
-
-try {
-  for (const q of INDEXES) {
-    try {
-      await graph.query(q);
-    } catch (error) {
-      if (!/already indexed/i.test(error.message)) throw error;
-    }
-  }
-
-  for (const { query, params } of SEED) {
-    await graph.query(query, { params });
-  }
-
-  // Sanity checks: expect 63 nodes and 262 relationships (see expected-results.md)
-  const nodes = await graph.roQuery(`
-    MATCH (n) RETURN labels(n)[0] AS label, count(n) AS count ORDER BY label
-  `);
-  const rels = await graph.roQuery(`
-    MATCH ()-[r]->() RETURN type(r) AS type, count(r) AS count ORDER BY type
-  `);
-
-  console.table(nodes.data);
-  console.table(rels.data);
-  console.log('Total nodes:', nodes.data.reduce((sum, row) => sum + row.count, 0));
-  console.log('Total relationships:', rels.data.reduce((sum, row) => sum + row.count, 0));
-} catch (error) {
-  console.error('FalkorDB error:', error);
-} finally {
-  await db.close();
+]) {
+  try { await run(idx); } catch { /* already exists */ }
 }
+
+// Nodes. UNWIND sends a whole list in one query instead of one query per item.
+await run(`UNWIND $rows AS row
+  MERGE (t:Team {name: row.name})
+  SET t.slack = row.slack, t.focus = row.focus`, { rows: data.teams });
+
+await run(`UNWIND $rows AS row
+  MERGE (s:Service {name: row.name})
+  SET s.tier = row.tier, s.type = row.type, s.tech = row.tech, s.description = row.description`, { rows: data.services });
+
+await run(`UNWIND $rows AS row
+  MERGE (p:Person {id: row.id})
+  SET p.name = row.name, p.role = row.role`, { rows: data.people });
+
+await run(`UNWIND $rows AS row
+  MERGE (i:Incident {id: row.id})
+  SET i.title = row.title, i.severity = row.severity, i.startedAt = row.startedAt,
+      i.durationMinutes = row.durationMinutes, i.rootCause = row.rootCause`, { rows: data.incidents });
+
+// Relationships.
+await run(`UNWIND $rows AS row
+  MATCH (t:Team {name: row.owner}), (s:Service {name: row.name})
+  MERGE (t)-[:OWNS]->(s)`, { rows: data.services });
+
+await run(`UNWIND $rows AS row
+  MATCH (p:Person {id: row.id}), (t:Team {name: row.team})
+  MERGE (p)-[:MEMBER_OF]->(t)`, { rows: data.people });
+
+await run(`UNWIND $rows AS row
+  MATCH (a:Service {name: row.from}), (b:Service {name: row.to})
+  MERGE (a)-[r:DEPENDS_ON]->(b)
+  SET r.via = row.via`, { rows: data.dependencies });
+
+await run(`UNWIND $rows AS row
+  MATCH (p:Person {id: row.person}), (s:Service {name: row.service})
+  MERGE (p)-[w:WORKED_ON]->(s)
+  SET w.commits = row.commits, w.lastActive = row.lastActive`, { rows: data.workedOn });
+
+const flat = (key) => data.incidents.flatMap((i) => i[key].map((v) => ({ id: i.id, v })));
+
+await run(`UNWIND $rows AS row
+  MATCH (i:Incident {id: row.id}), (s:Service {name: row.originatedIn})
+  MERGE (i)-[:ORIGINATED_IN]->(s)`, { rows: data.incidents.map((i) => ({ id: i.id, originatedIn: i.originatedIn })) });
+
+await run(`UNWIND $rows AS row
+  MATCH (i:Incident {id: row.id}), (s:Service {name: row.v})
+  MERGE (i)-[:AFFECTED]->(s)`, { rows: flat('affected') });
+
+await run(`UNWIND $rows AS row
+  MATCH (i:Incident {id: row.id}), (p:Person {id: row.v})
+  MERGE (p)-[:RESPONDED_TO]->(i)`, { rows: flat('responders') });
+
+const nodes = (await graph.roQuery('MATCH (n) RETURN count(n) AS c')).data[0].c;
+const rels = (await graph.roQuery('MATCH ()-[r]->() RETURN count(r) AS c')).data[0].c;
+console.log(`Graph "${GRAPH}": ${nodes} nodes, ${rels} relationships (expected 63 and 262 from the original data)`);
+await db.close();

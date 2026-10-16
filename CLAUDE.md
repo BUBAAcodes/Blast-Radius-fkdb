@@ -4,18 +4,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-A small practice project for the [FalkorDB](https://www.falkordb.com/) graph database using the `falkordb` Node.js client. All code lives in a single script, `script.mjs`. There is no build, lint, or test setup (`npm test` is a placeholder that exits 1).
+A Next.js app ("blast-radius") backed by the [FalkorDB](https://www.falkordb.com/) graph database, using the `falkordb` Node.js client. The graph models services, teams, people and incidents (outages) and the dependencies between services. There is no lint or test setup.
 
 ## Commands
 
 - Install: `npm install`
-- Run: `node script.mjs`
+- Dev server: `npm run dev`
+- Build / start: `npm run build`, `npm start`
+- Seed the graph: `npm run seed` (add or update data), `npm run seed -- --reset` (delete the graph first, then load fresh)
 
-Running requires a FalkorDB server on `localhost:6379` (e.g. `docker run -p 6379:6379 falkordb/falkordb`).
+A FalkorDB server on `localhost:6379` is required (e.g. `docker run -p 6379:6379 falkordb/falkordb`).
+
+## Layout
+
+- `app/`: Next.js app router (`layout.js`, `page.js`, `globals.css`).
+- `lib/falkor.js`: shared FalkorDB connection for the server. Exports `getGraph()` and `run(cypher, params, { write })`.
+- `script.mjs`: standalone seed script that loads `graph-data.json` into FalkorDB.
+- `graph-data.json`: seed data (teams, services, people, incidents, dependencies, workedOn).
 
 ## Notes
 
-- `package.json` declares `"type": "commonjs"`, but `script.mjs` uses ESM `import` and top-level `await`. The `.mjs` extension is what makes it work; keep new ESM scripts as `.mjs`.
-- The script uses the graph named `practice`, which is meant to match the graph viewed in the FalkorDB browser UI. Keep the name the same if you want to inspect results there.
-- `script.mjs` runs a `CREATE` on every execution, so re-running it adds duplicate `Service` nodes and edges to the `practice` graph. Delete the graph first (e.g. `graph.delete()`) or use `MERGE` if you need idempotent runs.
-- Use `graph.roQuery` for read-only Cypher and `graph.query` for writes.
+- Configuration comes from env vars, all optional: `FALKORDB_HOST` (default `localhost`), `FALKORDB_PORT` (`6379`), `FALKORDB_TLS` (`true` for encrypted connections, e.g. FalkorDB Cloud), `FALKORDB_USERNAME`, `FALKORDB_PASSWORD`, `FALKORDB_GRAPH` (default `outages`). `lib/falkor.js` and `script.mjs` read the same variables, so they always target the same graph.
+- `lib/falkor.js` caches the connection promise on `globalThis` so Next.js dev reloads don't open new connections. Don't create ad-hoc `FalkorDB.connect` calls in app code; use `getGraph()` / `run()`.
+- Use `roQuery` (the default in `run()`) for read-only Cypher and `query` (`run(..., { write: true })`) for writes.
+- The seed script is idempotent: nodes and relationships use `MERGE`, so re-running won't create duplicates. Use `--reset` for a clean reload.
+- After seeding the original data, the graph should have 63 nodes and 262 relationships. The seed script prints the actual counts.
+- `package.json` declares `"type": "commonjs"`, but `script.mjs` uses ESM `import` and top-level `await`. The `.mjs` extension is what makes it work; keep standalone ESM scripts as `.mjs`.
