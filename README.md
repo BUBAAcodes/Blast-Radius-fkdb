@@ -182,7 +182,13 @@ Port `6379` is the database. Port `3000` is the optional FalkorDB Browser UI. If
 
 ### 3. Add your environment variables
 
-Create a file called `.env.local` in the project root:
+Copy the example file:
+
+```bash
+cp .env.example .env.local
+```
+
+Then put your Gemini key in `.env.local`:
 
 ```bash
 GOOGLE_GENERATIVE_AI_API_KEY=your-gemini-api-key
