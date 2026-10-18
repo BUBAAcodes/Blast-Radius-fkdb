@@ -28,6 +28,8 @@ const EXAMPLES = [
   'ledger-db is out of disk. Open a SEV1 incident and tell me who to notify.',
 ];
 
+const MAX_QUESTION_LENGTH = 500; // same limit as app/api/chat/route.js, which enforces it
+
 const EMPTY_HIGHLIGHT = { nodes: new Set(), links: new Set(), focus: null };
 const linkKey = (l) => `${l.source}|${l.type}|${l.target}`;
 
@@ -341,6 +343,7 @@ export default function AgentApp() {
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
+                maxLength={MAX_QUESTION_LENGTH}
                 placeholder="Ask about a service, outage or incident…"
                 className="min-w-0 flex-1 bg-transparent py-2 text-sm text-slate-100 outline-none placeholder:text-slate-600"
               />

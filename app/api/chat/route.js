@@ -8,6 +8,8 @@ import { tools } from '@/lib/tools';
 
 export const maxDuration = 60; // seconds; a multi-step answer can take a while on Vercel
 
+const MAX_QUESTION_LENGTH = 500; // characters; the longest example question is about 75. Keep in sync with AgentApp.
+
 const SYSTEM = `You are Blast Radius, an incident investigation agent for a microservices company.
 You answer questions using a FalkorDB graph and must use the tools for every fact. Never guess
 names, owners, counts or incidents.
@@ -47,6 +49,14 @@ function errorMessage(err) {
 
 export async function POST(req) {
   const { messages } = await req.json();
+
+  // Long questions only burn quota: cap the length here too, since the input box limit is easy to skip.
+  const last = Array.isArray(messages) ? messages.at(-1) : null;
+  const text = last?.parts?.filter((p) => p.type === 'text').map((p) => p.text).join('') ?? '';
+  if (!text.trim()) return new Response('Please type a question.', { status: 400 });
+  if (text.length > MAX_QUESTION_LENGTH) {
+    return new Response(`Please keep questions under ${MAX_QUESTION_LENGTH} characters.`, { status: 400 });
+  }
 
   const result = streamText({
     model: google(process.env.GEMINI_MODEL || 'gemini-3.8-flash'),
