@@ -5,7 +5,7 @@
 Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs × FalkorDB, Oct 2026), **Track 01: Agents That Act on Connected Data**.
 
 - **Live demo:** _add your Vercel URL here_
-- **Demo video:** _add your video link here_
+- **Demo video:** [Watch on YouTube](https://www.youtube.com/watch?v=_W_F8Scp03s)
 
 ![Blast Radius landing page](docs/screenshots/landing.png)
 

@@ -52,7 +52,7 @@ export function Hero({ serviceNames }) {
         </p>
         <h1
           id="hero-title"
-          className="max-w-[16ch] bg-iridescent bg-clip-text pb-2 text-center text-5xl font-semibold leading-none tracking-[-0.06em] text-transparent sm:text-[64px] lg:text-[80px] motion-safe:animate-rise"
+          className="max-w-[16ch] pb-2 text-center text-5xl font-semibold leading-none tracking-[-0.06em] text-white sm:text-[64px] lg:text-[80px] motion-safe:animate-rise"
           style={rise(150)}
         >
           Know what breaks <br className="hidden sm:block" />before it breaks.
