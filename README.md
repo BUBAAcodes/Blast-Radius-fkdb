@@ -167,8 +167,8 @@ Past questions are saved in your browser (localStorage, up to 30) and can be reo
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/BUBAAcodes/Fkdb-AI-agent.git
-cd Fkdb-AI-agent
+git clone https://github.com/BUBAAcodes/Blast-Radius-fkdb.git
+cd Blast-Radius-fkdb
 npm install
 ```
 

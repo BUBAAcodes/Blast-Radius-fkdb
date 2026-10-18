@@ -2,7 +2,7 @@
 // marquee. Server components (no hooks), so any section can use them.
 import Link from 'next/link';
 
-export const GITHUB_URL = 'https://github.com/BUBAAcodes/Fkdb-AI-agent';
+export const GITHUB_URL = 'https://github.com/BUBAAcodes/Blast-Radius-fkdb';
 
 const FOCUS = 'focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#8399ff]';
 
