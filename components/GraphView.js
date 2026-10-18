@@ -8,7 +8,7 @@ import { COLORS } from '@/lib/colors';
 
 const endId = (end) => (typeof end === 'object' ? end.id : end); // the library swaps ids for objects
 
-export default function GraphView({ graph, highlight, selectedId, onSelect }) {
+export default function GraphView({ graph, highlight, selectedId, onSelect, fitKey }) {
   const fgRef = useRef(null);
   const boxRef = useRef(null);
   const [size, setSize] = useState({ width: 600, height: 400 });
@@ -42,7 +42,8 @@ export default function GraphView({ graph, highlight, selectedId, onSelect }) {
     fgRef.current?.d3Force('link')?.distance(45);
   }, [data]);
 
-  // Zoom to the highlighted part whenever a new answer arrives.
+  // Zoom to the highlighted part whenever a new answer arrives (or the whole graph when nothing is
+  // highlighted). Bumping fitKey re-runs this, so "Reset view" also undoes any panning and zooming.
   useEffect(() => {
     const fg = fgRef.current;
     if (!fg) return;
@@ -51,7 +52,7 @@ export default function GraphView({ graph, highlight, selectedId, onSelect }) {
       else fg.zoomToFit(700, 40);
     }, 250);
     return () => clearTimeout(t);
-  }, [highlight, active]);
+  }, [highlight, active, fitKey]);
 
   const isLit = (link) => highlight.links.has(link.id);
 

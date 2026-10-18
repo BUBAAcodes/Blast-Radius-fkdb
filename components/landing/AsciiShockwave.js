@@ -32,7 +32,7 @@ function frame(cols, rows, t) {
   return out;
 }
 
-export default function AsciiShockwave() {
+export default function AsciiShockwave({ className = 'text-teal-400/40' }) {
   const preRef = useRef(null);
 
   useEffect(() => {
@@ -91,7 +91,7 @@ export default function AsciiShockwave() {
     <pre
       ref={preRef}
       aria-hidden="true"
-      className="pointer-events-none absolute inset-0 m-0 select-none overflow-hidden font-mono text-teal-400/40"
+      className={`pointer-events-none absolute inset-0 m-0 select-none overflow-hidden font-mono ${className}`}
       style={{
         fontSize: FONT_PX,
         lineHeight: `${FONT_PX}px`,

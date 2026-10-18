@@ -2,7 +2,8 @@
 // The whole app: chat on the left, graph in the middle, details + evidence on the right.
 // Flow: you ask -> useChat POSTs to /api/chat -> the agent calls tools -> each tool result arrives
 // as a "tool-<name>" part on the message -> we collect those parts to light up the graph and fill
-// the evidence panel.
+// the evidence panel. Each question starts a fresh chat (no earlier context), and every finished
+// question is saved to this browser's history so it can be opened again from the history panel.
 import { useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
@@ -10,6 +11,10 @@ import { useChat } from '@ai-sdk/react';
 import DetailsPanel from '@/components/DetailsPanel';
 import Logo from '@/components/Logo';
 import { COLORS } from '@/lib/colors';
+import { loadHistory, newEntryId, questionOf, saveHistory } from '@/lib/chat-history';
+
+// Link shown when the AI quota runs out. Set NEXT_PUBLIC_DEMO_VIDEO_URL on the deployment.
+const DEMO_VIDEO_URL = process.env.NEXT_PUBLIC_DEMO_VIDEO_URL;
 
 // The canvas library needs the browser's window, so never render it on the server.
 const GraphView = dynamic(() => import('@/components/GraphView'), { ssr: false });
@@ -59,15 +64,39 @@ function Formatted({ text }) {
 }
 
 export default function AgentApp() {
-  const { messages, sendMessage, status, error } = useChat();
+  const { messages, setMessages, sendMessage, status, error, clearError } = useChat();
   const [input, setInput] = useState('');
   const [graph, setGraph] = useState({ nodes: [], links: [] });
   const [graphError, setGraphError] = useState(null);
   const [graphLoaded, setGraphLoaded] = useState(false);
   const [selected, setSelected] = useState(null);
   const [pinnedMessageId, setPinnedMessageId] = useState(null);
+  const [viewReset, setViewReset] = useState(false); // true: show the plain full graph, no highlight
+  const [fitKey, setFitKey] = useState(0);
+  const [history, setHistory] = useState([]);
+  const [current, setCurrent] = useState(null); // { id, createdAt } of the question on screen
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
 
   const busy = status === 'submitted' || status === 'streaming';
+
+  // History lives in localStorage, which only exists in the browser: read it after mount, then
+  // write it back on every change (never before the read, or the empty initial list would win).
+  useEffect(() => {
+    setHistory(loadHistory());
+    setHistoryLoaded(true);
+  }, []);
+  useEffect(() => { if (historyLoaded) saveHistory(history); }, [history, historyLoaded]);
+
+  // Once an answer has finished (or failed), store it under the current entry. New entries go first.
+  useEffect(() => {
+    if (busy || !current || !messages.length) return;
+    setHistory((prev) =>
+      prev.some((e) => e.id === current.id)
+        ? prev.map((e) => (e.id === current.id ? { ...e, messages } : e))
+        : [{ ...current, question: questionOf(messages), messages }, ...prev],
+    );
+  }, [busy, messages, current]);
 
   async function loadGraph() {
     try {
@@ -94,25 +123,57 @@ export default function AgentApp() {
   const done = evidence.filter((e) => e.output?.highlight);
   const signature = done.map((e) => e.key).join(',');
   const highlight = useMemo(() => {
-    if (!done.length) return EMPTY_HIGHLIGHT;
+    if (viewReset || !done.length) return EMPTY_HIGHLIGHT;
     return {
       nodes: new Set(done.flatMap((e) => e.output.highlight.nodes)),
       links: new Set(done.flatMap((e) => e.output.highlight.links.map(linkKey))),
       focus: done[0].output.focus,
     };
-  }, [signature]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [signature, viewReset]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // After the agent creates an incident, reload the graph so the new node appears.
   const graphChanges = evidence.filter((e) => e.output?.graphChanged).length;
   useEffect(() => { if (graphChanges) loadGraph(); }, [graphChanges]);
 
+  // Put a chat on screen: a fresh one for a new question, or a saved one from the history.
+  function show(entry, msgs) {
+    clearError();
+    setMessages(msgs);
+    setCurrent(entry);
+    setPinnedMessageId(null);
+    setSelected(null);
+    setViewReset(false);
+    setShowHistory(false);
+  }
+
   function ask(text) {
     const q = text.trim();
     if (!q || busy) return;
-    setPinnedMessageId(null);
-    setSelected(null);
+    show({ id: newEntryId(), createdAt: Date.now() }, []); // start fresh: no context from earlier questions
     sendMessage({ text: q });
     setInput('');
+  }
+
+  function openEntry(entry) {
+    if (!busy) show({ id: entry.id, createdAt: entry.createdAt }, entry.messages);
+  }
+
+  function deleteEntry(id) {
+    setHistory((prev) => prev.filter((e) => e.id !== id));
+    if (current?.id === id && !busy) show(null, []);
+  }
+
+  function clearHistory() {
+    setHistory([]);
+    if (!busy) show(null, []);
+  }
+
+  // Back to the whole graph: it is already in client state, so this only drops the highlight and
+  // re-fits the camera. Clicking an answer in the chat lights it up again.
+  function resetView() {
+    setViewReset(true);
+    setSelected(null);
+    setFitKey((k) => k + 1);
   }
 
   return (
@@ -147,6 +208,59 @@ export default function AgentApp() {
       <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] lg:grid-cols-[380px_minmax(0,1fr)_300px] lg:grid-rows-1">
         {/* Chat */}
         <section className="flex min-h-0 flex-col border-b border-slate-800 lg:border-b-0 lg:border-r">
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-800 px-3 py-2 font-mono text-[11px]">
+            <button
+              onClick={() => setShowHistory((v) => !v)}
+              className={`rounded-md border px-2.5 py-1 transition-colors ${
+                showHistory ? 'border-teal-400/40 text-teal-300' : 'border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+              }`}
+            >
+              {showHistory ? '← back to chat' : `history (${history.length})`}
+            </button>
+            <button
+              onClick={() => show(null, [])}
+              disabled={busy || (!messages.length && !showHistory)}
+              className="rounded-md border border-slate-800 px-2.5 py-1 text-slate-400 transition-colors hover:border-slate-700 hover:text-slate-200 disabled:opacity-40"
+            >
+              + new question
+            </button>
+          </div>
+
+          {showHistory ? (
+            <div className="flex-1 space-y-2 overflow-y-auto p-4">
+              <p className="mb-3 font-mono text-xs uppercase tracking-[0.2em] text-teal-400">// past questions</p>
+              {history.length === 0 && (
+                <p className="font-mono text-xs text-slate-500">Nothing yet. Questions you ask are saved here, in this browser only.</p>
+              )}
+              {history.map((e) => (
+                <div
+                  key={e.id}
+                  className={`group flex items-start gap-2 rounded-lg border px-3 py-2.5 transition-colors ${
+                    current?.id === e.id ? 'border-teal-400/30 bg-teal-400/[0.03]' : 'border-slate-800 bg-slate-900/30 hover:border-slate-700'
+                  }`}
+                >
+                  <button onClick={() => openEntry(e)} disabled={busy} className="min-w-0 flex-1 text-left disabled:opacity-60">
+                    <span className="line-clamp-2 text-xs text-slate-200">{e.question || '(empty question)'}</span>
+                    <span className="mt-1 block font-mono text-[10px] text-slate-500">
+                      {new Date(e.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => deleteEntry(e.id)}
+                    aria-label="Delete from history"
+                    className="font-mono text-xs text-slate-600 transition-colors hover:text-rose-400"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+              {history.length > 0 && (
+                <button onClick={clearHistory} className="pt-2 font-mono text-[11px] text-slate-500 transition-colors hover:text-rose-400">
+                  clear all history
+                </button>
+              )}
+            </div>
+          ) : (
           <div className="flex-1 space-y-4 overflow-y-auto p-4">
             {messages.length === 0 && (
               <div className="space-y-2">
@@ -172,7 +286,7 @@ export default function AgentApp() {
               ) : (
                 <div
                   key={m.id}
-                  onClick={() => setPinnedMessageId(m.id)}
+                  onClick={() => { setPinnedMessageId(m.id); setViewReset(false); }}
                   className={`cursor-pointer space-y-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
                     shown?.id === m.id ? 'border-teal-400/30 bg-teal-400/[0.03]' : 'border-transparent hover:border-slate-800'
                   }`}
@@ -200,8 +314,23 @@ export default function AgentApp() {
             )}
 
             {status === 'submitted' && <p className="animate-pulse font-mono text-xs text-slate-500">thinking…</p>}
-            {error && <p className="font-mono text-xs text-rose-400">Something went wrong: {error.message}</p>}
+            {error && (error.message.startsWith('QUOTA_EXCEEDED') ? (
+              <div className="rounded border border-amber-500/40 bg-amber-500/10 p-3 font-mono text-xs text-amber-300">
+                <p className="font-semibold">Demo limit reached</p>
+                <p className="mt-1 text-amber-200/80">
+                  This demo runs on a free AI quota and it has been used up for today. It is a usage limit,
+                  not a bug: the graph and tools still work. Please{' '}
+                  {DEMO_VIDEO_URL ? (
+                    <a href={DEMO_VIDEO_URL} target="_blank" rel="noreferrer" className="underline hover:text-amber-100">watch the demo video</a>
+                  ) : 'watch the demo video'}{' '}
+                  or try again later.
+                </p>
+              </div>
+            ) : (
+              <p className="font-mono text-xs text-rose-400">Something went wrong: {error.message}</p>
+            ))}
           </div>
+          )}
 
           <form
             onSubmit={(e) => { e.preventDefault(); ask(input); }}
@@ -239,6 +368,7 @@ export default function AgentApp() {
               highlight={highlight}
               selectedId={selected?.id}
               onSelect={setSelected}
+              fitKey={fitKey}
             />
           )}
 
@@ -246,6 +376,16 @@ export default function AgentApp() {
             <div className="pointer-events-none absolute left-3 top-3 rounded-md border border-slate-800 bg-[#05070d]/80 px-2.5 py-1 font-mono text-[11px] text-slate-400 backdrop-blur">
               showing {highlight.nodes.size} nodes and {highlight.links.size} links used in this answer
             </div>
+          )}
+
+          {!graphError && graphLoaded && (
+            <button
+              onClick={resetView}
+              title="Show the full graph again (click an answer to highlight it again)"
+              className="absolute right-3 top-3 rounded-md border border-slate-800 bg-[#05070d]/80 px-2.5 py-1 font-mono text-[11px] text-slate-400 backdrop-blur transition-colors hover:border-teal-400/40 hover:text-teal-300"
+            >
+              ⟲ reset view
+            </button>
           )}
         </section>
 

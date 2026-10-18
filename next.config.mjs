@@ -2,6 +2,7 @@
 const nextConfig = {
   /* config options here */
   serverExternalPackages: ["falkordb"],
+  devIndicators: false,
   cacheComponents: true,
   partialPrefetching: true,
   turbopack: {

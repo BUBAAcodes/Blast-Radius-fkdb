@@ -1,6 +1,7 @@
-// The agent: the chat page POSTs the conversation here. streamText sends it to the model with the
+// The agent: the chat page POSTs the question here. streamText sends it to the model with the
 // system prompt and tools, runs any tools the model asks for, feeds the results back, and repeats
 // until the model writes a final answer (or the step limit is hit). Everything streams to the browser.
+// Every question is answered on its own: earlier questions are never sent to the model.
 import { streamText, convertToModelMessages, stepCountIs } from 'ai';
 import { google } from '@ai-sdk/google';
 import { tools } from '@/lib/tools';
@@ -29,17 +30,32 @@ How to work:
 - Be concise: a short answer, then bullet points. Mention owning teams and their Slack channels when
   someone needs to act.`;
 
+// Gemini says "429 / RESOURCE_EXHAUSTED" when the free-tier quota is used up. After its retries the
+// SDK wraps that in a RetryError, so check the last attempt too.
+const QUOTA_RE = /quota|RESOURCE_EXHAUSTED|rate limit|too many requests/i;
+function isQuotaError(err) {
+  return [err, err?.lastError].some((e) => e?.statusCode === 429 || QUOTA_RE.test(String(e?.message ?? '')));
+}
+
+// The text the browser sees for a failed answer. The "QUOTA_EXCEEDED:" prefix lets the chat show a
+// friendly "demo limit reached" notice instead of a generic error.
+function errorMessage(err) {
+  if (isQuotaError(err)) return 'QUOTA_EXCEEDED: The demo has reached its daily AI limit.';
+  console.error('chat error:', err);
+  return 'The agent could not answer this time. Please try again.';
+}
+
 export async function POST(req) {
   const { messages } = await req.json();
 
   const result = streamText({
     model: google(process.env.GEMINI_MODEL || 'gemini-3.8-flash'),
     system: SYSTEM,
-    messages: await convertToModelMessages(messages),
+    messages: await convertToModelMessages(messages.slice(-1)), // only the latest question
     tools,
     stopWhen: stepCountIs(6), // at most 6 model calls per question: limits cost and loops
     maxOutputTokens: 1200,
   });
 
-  return result.toUIMessageStreamResponse();
+  return result.toUIMessageStreamResponse({ onError: errorMessage });
 }
